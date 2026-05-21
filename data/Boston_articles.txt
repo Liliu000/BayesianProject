@@ -1,0 +1,7 @@
+https://github.com/maicat11/Project_2-Marathon-Predictor/blob/master/Scripts_Notebooks/DataExploration.ipynb
+
+https://github.com/adrian3/Boston-Marathon-Data-Project
+
+https://github.com/trchan/boston-marathon
+
+https://github.com/rojour/boston_results/tree/master

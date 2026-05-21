@@ -1,0 +1,109 @@
+---
+title: ''
+output: html_document
+date: "2026-05-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+
+```
+
+## R Markdown
+
+
+```{r cars}
+df = read.csv("data/filtered_marathons_results.csv")
+df <- df %>% 
+    mutate(
+      isMale =  as.integer(ifelse(M.F == "F", 0, 1)), 
+      City = as.factor(City),
+      State = as.factor(State),
+      Country = as.factor(Country),
+      Parathletics = as.integer(ifelse(Parathletics == "No", 0, 1)),
+      X5K = as.numeric(hms(X5K)),
+      X10K = as.numeric(hms(X10K)),
+      X15K = as.numeric(hms(X15K)),
+      X20K = as.numeric(hms(X20K)),
+      Half = as.numeric(hms(Half)),
+      X25K = as.numeric(hms(X25K)),
+      X30K = as.numeric(hms(X30K)),
+      X35K = as.numeric(hms(X35K)),
+      X40K = as.numeric(hms(X40K)),
+      Pace = as.numeric(hms(Pace)),
+      Proj.Time = as.numeric(hms(Proj.Time)),
+      Official.Time = as.numeric(hms(Official.Time))
+    )
+summary(df)
+```
+```{r}
+glimpse(df)
+```
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+ggplot(df, aes(x = Age)) +
+  geom_histogram(binwidth = 2, fill = "steelblue", color = "white") +
+  labs(title = "Distribution of Runners' Ages", x = "Age", y = "Count") +
+  theme_minimal()
+
+```
+
+```{r}
+ggplot(df, aes(x = Age, y = Official.Time / 3600)) +
+  geom_point(alpha = 0.1, size = 0.5) +
+  geom_smooth(method = "gam", color = "red") +
+  labs(title = "Age vs. Official Finish Time", 
+       x = "Age", y = "Finish Time (Hours)") +
+  theme_minimal()
+```
+
+```{r}
+#df_temp <- df %>% select(isMale, Official.Time)
+#df_temp$GenderLabel <- ifelse(df$isMale == 1, "Male", "Female")
+
+ggplot(df, aes(x = M.F, y = Official.Time / 3600, fill = M.F)) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.1, fill = "white") +
+  labs(title = "Finish Time Distribution by Gender", 
+       x = "Gender", y = "Finish Time (Hours)") +
+  theme_minimal()
+```
+```{r}
+# Calculate Second Half time
+df_temp <- df %>% select(Half)
+df_temp$SecondHalf <- df$Official.Time - df$Half
+
+ggplot(df_temp, aes(x = Half, y = SecondHalf)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
+  labs(title = "First Half vs. Second Half Split Times",
+       subtitle = "Points above the red line slowed down in the second half",
+       x = "First Half (Seconds)", y = "Second Half (Seconds)") +
+  theme_minimal()
+```
+```{r}
+df %>%
+  filter(Country != "USA") %>%
+  count(Country) %>%
+  top_n(10, n) %>%
+  ggplot(aes(x = reorder(Country, n), y = n)) +
+  geom_col(fill = "darkgreen") +
+  coord_flip() +
+  labs(title = "Top 10 International Countries", x = "Country", y = "Number of Runners") +
+  theme_minimal()
+```
+```{r}
+ggplot(df, aes(x = as.factor(Year), y = Official.Time / 3600, group = Year)) +
+  geom_boxplot(fill = "orange", alpha = 0.7) +
+  labs(title = "Finish Times by Year", x = "Year", y = "Finish Time (Hours)") +
+  theme_minimal()
+```
+
