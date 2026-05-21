@@ -7,13 +7,14 @@ Predir finish time
 
 \beta_0+ \beta_5*country[i] + \beta_1*Age_i + \beta_2*isMale_i + \beta_3*Para_i + \beta_4*Div_i + \alpha_1 * temp + \alpha_2*wind + \alpha_3*Precipitacio + \delta_1* 5K 
 ​
+wind(Positive for tailwind, negative for headwind)
 
 predir finish time 10 first
 Hierarchical by Year: Each year has a "Year Effect" (mostly caused by weather).
 Rank Effect: The difference between 1st and 10th place is usually consistent (a "gap" effect).
 Long-term Trend: A linear or non-linear trend to account for improvements in shoe technology (e.g., the introduction of "super shoes" around 2017) and training.
 Handling 2026 Weather: Since we don't know the weather for 2026, the model will treat the "Year Effect" as a random draw from the historical variance of Boston weather.
-
+isOlympicYear(2000, 2004, 2008, 2012, 2016, 2021, 2024)???
 
 adrian3 te historics
 https://www.baa.org/races/boston-marathon/results/
