@@ -1,7 +1,7 @@
 data {
   int<lower=0> N;                // Number of observations
   int<lower=0> R_runner;         // Number of unique runners
-  int<lower=0> C_country;        // Number of countries
+  #int<lower=0> C_country;        // Number of countries
   int<lower=0> J_year;           // Number of years (6)
   
   vector[N] y;                   // Log Time
@@ -10,14 +10,14 @@ data {
   vector[N] sex;                 // 0 or 1
   
   int runner[N];                 // Runner ID index
-  int country[N];                // Country ID index
+  #int country[N];                // Country ID index
   int year[N];                   // Year ID index
   
   vector[J_year] year_temp;      // Temperature per year (multilevel covariate)
   
     // Data for prediction
   int pred_runner_id;      // Index of a specific runner to predict
-  int pred_country_id;     // Index of their country
+  #int pred_country_id;     // Index of their country
   real pred_age;           // Their age
   real pred_sex;           // Their sex
   real pred_temp;          // Temperature of the year we want to predict
@@ -32,7 +32,7 @@ parameters {
   
   // Group level effects (Random intercepts)
   vector[R_runner] alpha_runner;
-  vector[C_country] alpha_country;
+  #vector[C_country] alpha_country;
   vector[J_year] gamma_year;
   
   // Parameters for the Year-level covariate (like g_0, g_1 in radon)
@@ -42,7 +42,7 @@ parameters {
   // Hyper-parameters (Variances)
   real<lower=0> sigma_y;
   real<lower=0> sigma_runner;
-  real<lower=0> sigma_country;
+  #real<lower=0> sigma_country;
   real<lower=0> sigma_year;
   
   // Degrees of freedom for Student-t
@@ -56,7 +56,7 @@ model {
   
   // 2. Priors for other levels
   alpha_runner ~ normal(0, sigma_runner);
-  alpha_country ~ normal(0, sigma_country);
+  #alpha_country ~ normal(0, sigma_country);
   
   // 3. Fixed effects priors
   // b_0 ~ normal(5, 2);
@@ -74,7 +74,7 @@ model {
               b_age * age[n] + 
               b_age2 * age2[n] + 
               alpha_runner[runner[n]] + 
-              alpha_country[country[n]] + 
+              #alpha_country[country[n]] + 
               gamma_year[year[n]];
               
     y[n] ~ student_t(nu, mu, sigma_y);

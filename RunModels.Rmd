@@ -116,21 +116,21 @@ Prior for ν: I used a gamma(2, 0.1) prior for the degrees of freedom (ν). This
 
 ```{r results}
 # 4. Results and Diagnostics
-print(fit, pars = c("beta0", "beta_sex", "beta_age", "beta_age2", "sigma", "nu"))
+print(model.base, pars = c("beta0", "beta_sex", "beta_age", "beta_age2", "sigma", "nu"))
 
 # Plotting the posterior distributions
-plot(fit, pars = c("beta_sex", "beta_age", "beta_age2"))
+plot(model.base, pars = c("beta_sex", "beta_age", "beta_age2"))
 
 
 # Extract results into a tidy format
-model_summary <- tidy(fit, conf.int = TRUE, prob = 0.95)
+model_summary <- tidy(model.base, conf.int = TRUE, prob = 0.95)
 print(model_summary)
 
 ```
 
 ```{r}
 # 5. Extracting samples for prediction
-post_samples <- extract(fit)
+post_samples <- extract(model.base)
 # Example: Mean effect of being Female on log(time)
 mean_sex_effect <- mean(post_samples$beta_sex)
 cat("On average, being female changes log time by:", mean_sex_effect)
@@ -138,7 +138,7 @@ cat("On average, being female changes log time by:", mean_sex_effect)
 ```
 
 ```{r}
-post_samples <- as.data.frame(fit)
+post_samples <- as.data.frame(model.base)
 
 # Generate predictions for a range of ages
 age_range <- seq(min(df_clean$Age), max(df_clean$Age), length.out = 100)
@@ -171,14 +171,20 @@ ggplot(pred_df, aes(x = Age, y = log_time_pred)) +
 mean_age <- mean(Age)
 sd_age <- sd(Age)
 
+df_og <- read.csv("data/dfall_overall.csv")
 
-df_time <- df_og %>%
+df_filtered <- df_og %>%
+  group_by(ID) %>%
+  filter(n() > 1 & any(Year %in% c(2015, 2016, 2017))) %>%
+  ungroup()
+
+df_time <- df_filtered %>%
   mutate(
     # Convert Official Time to minutes
     minutes = sapply(`Official.Time`, time_to_minutes),
     log_time = log(minutes),
     runner_id = as.numeric(as.factor(ID)),
-    country_id = as.numeric(as.factor(Country)),
+    #country_id = as.numeric(as.factor(Country)),
     year_id = as.numeric(as.factor(Year)),
     sex_numeric = ifelse(`M.F` == "F", 1, 0),
     # Standardize Age to help convergence
@@ -208,12 +214,12 @@ runner_data <- df_time %>%
 
 age_at_target <- target_year - runner_data$Birth.Year
 runner_levels <- levels(as.factor(df$ID))
-country_levels <- levels(as.factor(df$Country))
+#country_levels <- levels(as.factor(df$Country))
 
 data_list <- list(
   N = nrow(df),
   R_runner = max(df$runner_id),
-  C_country = max(df$country_id),
+  #C_country = max(df$country_id),
   J_year = max(df$year_id),
   
   # Individual data
@@ -224,14 +230,14 @@ data_list <- list(
   
   # Index maps
   runner = df$runner_id,
-  country = df$country_id,
+  #country = df$country_id,
   year = df$year_id,
   
   # Year-level covariate (The "Multilevel Covariate")
   year_temp = year_covs$temp, 
   
   pred_runner_id =  which(runner_levels == as.character(id_predict)),      #Index of a specific runner to predict
-  pred_country_id= which(country_levels == as.character(id_predict)),     #Index of their country
+  #pred_country_id= which(country_levels == as.character(id_predict)),     #Index of their country
   pred_age= (age_at_target - mean_age) / sd_age,           # Their age
   pred_sex= runner_data$sex_numeric,           # Their sex
   pred_temp=target_temp <- 16
