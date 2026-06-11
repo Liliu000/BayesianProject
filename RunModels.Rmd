@@ -115,6 +115,8 @@ Age Quadratic: The inclusion of Age^2 allows the model to capture the "U-shaped"
 Prior for ν: I used a gamma(2, 0.1) prior for the degrees of freedom (ν). This keeps ν away from 0 and 1, ensuring the distribution has a defined mean and variance while still allowing for heavy tails.
 
 ```{r results}
+print(model.base)
+plot(model.base)
 # 4. Results and Diagnostics
 print(model.base, pars = c("beta0", "beta_sex", "beta_age", "beta_age2", "sigma", "nu"))
 
@@ -123,8 +125,19 @@ plot(model.base, pars = c("beta_sex", "beta_age", "beta_age2"))
 
 
 # Extract results into a tidy format
-model_summary <- tidy(model.base, conf.int = TRUE, prob = 0.95)
+model_summary <- rstan::extract(model.base)
 print(model_summary)
+
+df_pooled <- tibble(
+  #county = county_name,
+  model = "pooled",
+  intercept = mean(model_summary$beta0),
+  slope = mean(model_summary$mu),
+  slope_sex = mean(model_summary$beta_sex),
+  slope_age = mean(model_summary$beta_age), 
+  slope_age2 = mean(model_summary$beta_age2)
+)
+
 
 ```
 
@@ -132,13 +145,13 @@ print(model_summary)
 # 5. Extracting samples for prediction
 post_samples <- extract(model.base)
 # Example: Mean effect of being Female on log(time)
-mean_sex_effect <- mean(post_samples$beta_sex)
+mean_sex_effect <- mean(model_summary$beta_sex)
 cat("On average, being female changes log time by:", mean_sex_effect)
 
 ```
 
 ```{r}
-post_samples <- as.data.frame(model.base)
+post_samples <- as.data.frame(model_summary)
 
 # Generate predictions for a range of ages
 age_range <- seq(min(df_clean$Age), max(df_clean$Age), length.out = 100)
@@ -168,23 +181,19 @@ ggplot(pred_df, aes(x = Age, y = log_time_pred)) +
 
 # Model3
 ```{r Prep3}
-mean_age <- mean(Age)
-sd_age <- sd(Age)
 
-df_og <- read.csv("data/dfall_overall.csv")
 
-df_filtered <- df_og %>%
-  group_by(ID) %>%
-  filter(n() > 1 & any(Year %in% c(2015, 2016, 2017))) %>%
-  ungroup()
+df_og <- read.csv("data/repeated_ids_with_countries.csv")
 
-df_time <- df_filtered %>%
+mean_age <- mean(df_og$Age)
+sd_age <- sd(df_og$Age)
+df_time <- df_og %>%
   mutate(
     # Convert Official Time to minutes
     minutes = sapply(`Official.Time`, time_to_minutes),
     log_time = log(minutes),
     runner_id = as.numeric(as.factor(ID)),
-    #country_id = as.numeric(as.factor(Country)),
+    country_id = as.numeric(as.factor(Country)),
     year_id = as.numeric(as.factor(Year)),
     sex_numeric = ifelse(`M.F` == "F", 1, 0),
     # Standardize Age to help convergence
@@ -193,20 +202,40 @@ df_time <- df_filtered %>%
   )
 df_clean <- df_time %>%
   filter(!is.na(log_time)) # Remove any rows with missing times
-df<- df_clean %>% sample_n(3000)
+
+df_test <- df_clean %>% filter(Year > 2018)
+df<- df_clean %>% filter(Year <= 2018)
 
 
 # Example Year-level covariate: Average Temperature in Boston on race day
 # (You would replace these with actual historical values)
-year_covs <- data.frame(
-  year_id = 1:6,
-  temp = c(12, 18, 15, 21, 11, 14) # Hypothetical temps for 2014-2019
-)
+df_weather <- read.csv("data/weather_averages.csv")
+
+print(str(df_weather))
+year_covs <- df_weather %>%
+  mutate(
+    Year = as.numeric(as.factor(Year))
+  )
+print(year_covs)
+
+year_pred <- year_covs %>% filter(Year > 2018)
+year_covs <- year_covs %>% filter(Year <= 2018)
+# 2018 (1.57"): Give this a score of 1.0 (Maximum wetness; rain during race).
+# 2019 (0.72"): Give this a score of 0.2 (High total, but the course was just "damp" during the race).[1][2][3]
+# 2015 (0.61"): Give this a score of 0.8 (Steady rain during the race).
+# 
 
 
-id_predict = 98267562
-target_year = 2024
-target_temp <- 16
+# To turn wind into a number for your model, use the cosine of the angle between the wind and the course.
+# Tailwind (+): Wind from the West (245°) is a 100% tailwind.
+# Headwind (-): Wind from the East (65°) is a 100% headwind.
+# Formula for your spreadsheet:
+# Effective Wind = Wind Speed × cos(Wind Direction - 65°)
+# (Note: Convert compass directions to degrees: N=0, E=90, S=180, W=270)
+
+
+id_predict = 23280
+target_year = 2019
 
 runner_data <- df_time %>%
   filter(runner_id == id_predict) %>%
@@ -214,12 +243,12 @@ runner_data <- df_time %>%
 
 age_at_target <- target_year - runner_data$Birth.Year
 runner_levels <- levels(as.factor(df$ID))
-#country_levels <- levels(as.factor(df$Country))
+country_levels <- levels(as.factor(df$Country))
 
 data_list <- list(
   N = nrow(df),
   R_runner = max(df$runner_id),
-  #C_country = max(df$country_id),
+  C_country = max(df$country_id),
   J_year = max(df$year_id),
   
   # Individual data
@@ -230,17 +259,23 @@ data_list <- list(
   
   # Index maps
   runner = df$runner_id,
-  #country = df$country_id,
+  country = df$country_id,
   year = df$year_id,
   
   # Year-level covariate (The "Multilevel Covariate")
-  year_temp = year_covs$temp, 
+  year_temp = year_covs$Temperature, 
+  year_dew = year_covs$Dew.Point,
+  year_prec = year_covs$Precip.,
+  year_wind = year_covs$Tailwind_Component,
   
   pred_runner_id =  which(runner_levels == as.character(id_predict)),      #Index of a specific runner to predict
-  #pred_country_id= which(country_levels == as.character(id_predict)),     #Index of their country
+  pred_country_id= which(country_levels == as.character(id_predict)),     #Index of their country
   pred_age= (age_at_target - mean_age) / sd_age,           # Their age
   pred_sex= runner_data$sex_numeric,           # Their sex
-  pred_temp=target_temp <- 16
+  pred_temp=target_temp = year_pred$Temperature,
+  pred_dew = year_pred$Dew.Point,
+  pred_prec = year_pred$Precip.,
+  pred_wind = year_pred$Tailwind_Component,
 )
 ```
 
