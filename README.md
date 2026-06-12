@@ -1,4 +1,5 @@
 # Codi complet utilitzat pel Treball final de Analisis Bayesia
+**Consell: ** utilitzar git-lfs si fas clone del repo. **INTENTAR NO CLONAR, LA MIDA DELS CSVs I MODELS (.rds) ES IMMENSA**
 
 ## Datasets utilitzats:
 Dintre carpeta **data/** hi ha tots els datasets que es van proposar, els que utilitzem i els datasets transformats que s'utilitza en projecte. 
