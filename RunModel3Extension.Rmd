@@ -1,0 +1,242 @@
+---
+title: "RunModel3"
+author: "AAA"
+date: "2026-06-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(rstan)
+#library(rstanarm) 
+library(tidyverse) 
+library(broom)
+library(lubridate)
+library(bayesplot)
+library(broom.mixed)
+```
+
+## Standarize Weather var
+
+
+```{r year_Std}
+
+df_weather <- read.csv("data/weather_averages.csv")
+
+weather_means <- df_weather %>%
+  summarise(
+    temp_mean = mean(Temperature),
+    dew_mean  = mean(Dew.Point),
+    prec_mean = mean(Precip.),
+    wind_mean = mean(Tailwind_Component)
+  )
+
+weather_sds <- df_weather %>%
+  summarise(
+    temp_sd = sd(Temperature),
+    dew_sd  = sd(Dew.Point),
+    prec_sd = sd(Precip.),
+    wind_sd = sd(Tailwind_Component)
+  )
+
+df_weather <- df_weather %>%
+  mutate(
+    temp_z =
+      (Temperature - weather_means$temp_mean) /
+      weather_sds$temp_sd,
+
+    dew_z =
+      (Dew.Point - weather_means$dew_mean) /
+      weather_sds$dew_sd,
+
+    prec_z =
+      (Precip. - weather_means$prec_mean) /
+      weather_sds$prec_sd,
+
+    wind_z =
+      (Tailwind_Component - weather_means$wind_mean) /
+      weather_sds$wind_sd
+  )
+```
+
+## Stable year indexing
+
+
+```{r df_index}
+
+df_og <- read.csv("data/repeated_ids_with_countries.csv")
+
+mean_age <- mean(df_og$Age)
+sd_age <- sd(df_og$Age)
+
+year_lookup <- sort(unique(df_og$Year))
+
+df_time <- df_og %>%
+  mutate(
+    minutes = sapply(Official.Time, time_to_minutes),
+    log_time = log(minutes),
+
+    runner_id = as.numeric(as.factor(ID)),
+    country_id = as.numeric(as.factor(Country)),
+
+    year_id = match(Year, year_lookup),
+
+    sex_numeric = ifelse(`M.F` == "F", 1, 0),
+
+    age_std = (Age - mean_age) / sd_age,
+    age2_std = age_std^2
+  )
+
+```
+
+## Train Test
+```{r traintest}
+
+df <- df_time %>%
+  filter(Year <= 2018)
+
+df_test <- df_time %>%
+  filter(Year > 2018)
+
+year_covs <- df_weather %>%
+  filter(Year <= 2018)
+
+year_pred <- df_weather %>%
+  filter(Year == 2019)
+```
+
+## Prediction Runner
+
+```{r predVar}
+id_predict <- 23280
+
+runner_data <- df_test %>%
+  filter(ID == id_predict) %>%
+  slice(1)
+
+country_of_runner <- runner_data$Country
+
+
+runner_levels <- levels(as.factor(df$ID))
+country_levels <- levels(as.factor(df$Country))
+
+pred_runner_id <-
+  which(
+    runner_levels ==
+    as.character(runner_data$ID)
+  )
+
+pred_country_id <-
+  which(
+    country_levels ==
+    country_of_runner
+  )
+
+
+target_year <- 2019
+
+age_at_target <-
+  target_year -
+  runner_data$Birth.Year
+
+pred_age_std <-
+  (age_at_target - mean_age) /
+  sd_age
+```
+
+## Data list
+```{r datalist}
+data_list <- list(
+
+  N = nrow(df),
+
+  R_runner = max(df$runner_id),
+  C_country = max(df$country_id),
+  J_year = nrow(year_covs),
+
+  y = df$log_time,
+
+  age = df$age_std,
+  age2 = df$age2_std,
+  sex = df$sex_numeric,
+
+  runner = df$runner_id,
+  country = df$country_id,
+  year = df$year_id,
+
+  year_temp = year_covs$temp_z,
+  year_dew  = year_covs$dew_z,
+  year_prec = year_covs$prec_z,
+  year_wind = year_covs$wind_z,
+
+  pred_runner_id = pred_runner_id,
+  pred_country_id = pred_country_id,
+
+  pred_age = pred_age_std,
+  pred_sex = runner_data$sex_numeric,
+
+  pred_temp = year_pred$temp_z,
+  pred_dew  = year_pred$dew_z,
+  pred_prec = year_pred$prec_z,
+  pred_wind = year_pred$wind_z
+)
+```
+
+
+
+## Fast model fitting
+```{r}
+library(rstan)
+
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+
+sm <- stan_model("stan_models/Model3.stan")
+fit_test <- sampling(
+  sm,
+  data = data_list,
+  chains = 2,
+  iter = 500,
+  warmup = 250,
+  seed = 123
+)
+
+print(
+  fit_test,
+  pars = c(
+    "b_0",
+    "b_sex",
+    "b_age",
+    "b_age2",
+    "sigma_y"
+  )
+)
+```
+
+```{r}
+model3.2k <- sampling(
+  sm,
+  data = data_list,
+  chains = 4,
+  iter = 2000,
+  control = list(
+    adapt_delta = 0.9
+  )
+)
+```
+
+
+```{r}
+model3.5k <- sampling(
+  sm,
+  data = data_list,
+  chains = 4,
+  iter = 5000,
+  seed = 123,
+  control = list(
+    adapt_delta = 0.95,
+    max_treedepth = 12
+  )
+)
+```
+
