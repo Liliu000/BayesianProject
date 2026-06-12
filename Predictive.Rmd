@@ -1,0 +1,274 @@
+---
+title: "Predict"
+output: html_document
+---
+
+#  Prediction using Model 3
+
+```{r}
+library(readr)
+library(dplyr)
+library(lubridate)
+library(cmdstanr)
+library(posterior)
+library(ggplot2)
+```
+
+# Load data
+
+```{r}
+df_raw <- read_csv("repeated_ids_with_countries.csv")
+```
+
+# Prepare data
+
+```{r}
+df_model <- df_raw %>%
+  mutate(
+    log_time = log(as.numeric(hms(`Official Time`)) / 3600),
+    Sex = ifelse(`M/F` == "M", 1, 0),
+    Age = as.numeric(scale(Age)),
+    Age2 = Age^2,
+    year_id = as.integer(as.factor(Year)),
+    country_id = as.integer(as.factor(Country)),
+    runner_id = as.integer(as.factor(ID))
+  ) %>%
+  filter(!is.na(log_time)) %>%
+  mutate(Year = as.integer(Year))
+```
+
+# Train-test split
+
+```{r}
+df_train <- df_model %>%
+  filter(Year <= 2018)
+
+df_test <- df_model %>%
+  filter(Year == 2019)
+```
+
+# Keep runners observed in both train and test
+
+```{r}
+common_runners <- intersect(
+  unique(df_train$runner_id),
+  unique(df_test$runner_id) )
+
+df_pred <- df_test %>%
+  filter(runner_id %in% common_runners)
+```
+
+# Load fitted Model 3
+
+```{r}
+fit3 <- readRDS("fit_model3.rds")
+```
+
+# Extract posterior means
+
+```{r}
+main_params <- fit3$summary(c(
+  "beta0",
+  "beta_sex",
+  "beta_age",
+  "beta_age2"
+))
+
+b0 <- main_params$mean[main_params$variable == "beta0"]
+bsex <- main_params$mean[main_params$variable == "beta_sex"]
+bage <- main_params$mean[main_params$variable == "beta_age"]
+bage2 <- main_params$mean[main_params$variable == "beta_age2"]
+```
+
+# Extract runner effects
+
+```{r}
+runner_effects <- fit3$summary("alpha_runner") %>%
+  mutate(
+    runner_id = as.integer(
+      gsub("alpha_runner\\[|\\]", "", variable)
+    )
+  ) %>%
+  select(runner_id, alpha_runner = mean)
+```
+
+#  Extract country effects
+
+```{r}
+country_effects <- fit3$summary("alpha_country") %>%
+  mutate(
+    country_id = as.integer(
+      gsub("alpha_country\\[|\\]", "", variable)
+    )
+  ) %>%
+  select(country_id, alpha_country = mean)
+```
+
+# Extract year effect for 2019
+
+```{r}
+year_effects <- fit3$summary("alpha_year") %>%
+  mutate(
+    year_id = as.integer(
+      gsub("alpha_year\\[|\\]", "", variable)
+    )
+  ) %>%
+  select(year_id, alpha_year = mean)
+```
+
+# Build predictions
+
+```{r}
+df_pred <- df_pred %>%
+  left_join(runner_effects, by = "runner_id") %>%
+  left_join(country_effects, by = "country_id") %>%
+  left_join(year_effects, by = "year_id") %>%
+  mutate(
+    pred_log_time =
+      b0 +
+      bsex * Sex +
+      bage * Age +
+      bage2 * Age2 +
+      alpha_runner +
+      alpha_country +
+      alpha_year,
+    
+    observed_hours = exp(log_time),
+    predicted_hours = exp(pred_log_time),
+    
+    observed_minutes = observed_hours * 60,
+    predicted_minutes = predicted_hours * 60,
+    
+    error_minutes = predicted_minutes - observed_minutes,
+    abs_error_minutes = abs(error_minutes)
+  )
+```
+
+# Prediction metrics
+
+```{r}
+prediction_metrics <- df_pred %>%
+  summarise(
+    n_predictions = n(),
+    MAE_minutes = mean(abs_error_minutes, na.rm = TRUE),
+    RMSE_minutes = sqrt(mean(error_minutes^2, na.rm = TRUE)),
+    correlation = cor(observed_minutes, predicted_minutes)
+  )
+
+print(prediction_metrics)
+```
+
+# Performance level error
+
+```{r}
+# Does it predict fast and slow runners equally well?
+df_pred %>%
+  mutate(
+    group = case_when(
+      observed_minutes < 180 ~ "Sub 3h",
+      observed_minutes < 240 ~ "3h-4h",
+      TRUE ~ "Over 4h"
+    )
+  ) %>%
+  group_by(group) %>%
+  summarise(
+    MAE = mean(abs_error_minutes),
+    RMSE = sqrt(mean(error_minutes^2)),
+    n = n()
+  )
+```
+
+# Top 20 best predictions
+
+```{r}
+df_pred %>%
+  arrange(abs_error_minutes) %>%
+  select(
+    Name,
+    observed_minutes,
+    predicted_minutes,
+    abs_error_minutes
+  ) %>%
+  head(20)
+```
+
+#  Worst predictions
+
+```{r}
+df_pred %>%
+  arrange(desc(abs_error_minutes)) %>%
+  head(20)
+```
+
+# Predictive R²
+
+```{r}
+correlation = 0.92
+correlation^2
+```
+
+# Error vs. real-time graph
+
+```{r}
+ggplot(
+  df_pred,
+  aes(
+    x = observed_minutes,
+    y = error_minutes
+  )
+) +
+  geom_point(alpha = 0.3) +
+  geom_hline(
+    yintercept = 0,
+    colour = "red"
+  ) +
+  theme_minimal()
+```
+
+# Save predictions
+
+```{r}
+write_csv(df_pred, "model3_predictions_2019.csv")
+write_csv(prediction_metrics, "model3_prediction_metrics.csv")
+```
+
+# Plot observed vs predicted
+
+```{r}
+ggplot(df_pred, aes(x = observed_minutes, y = predicted_minutes)) +
+  geom_point(alpha = 0.4) +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(
+    title = "Observed vs Predicted Marathon Finish Times",
+    x = "Observed time (minutes)",
+    y = "Predicted time (minutes)"
+  ) +
+  theme_minimal()
+
+ggsave(
+  "model3_observed_vs_predicted.png",
+  width = 7,
+  height = 5,
+  dpi = 300
+)
+```
+
+# Plot prediction errors
+
+```{r}
+ggplot(df_pred, aes(x = error_minutes)) +
+  geom_histogram(bins = 40, fill = "steelblue", color = "white") +
+  labs(
+    title = "Prediction Error Distribution",
+    x = "Prediction error (minutes)",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+ggsave(
+  "model3_prediction_errors.png",
+  width = 7,
+  height = 5,
+  dpi = 300
+)
+```

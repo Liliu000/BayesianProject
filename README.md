@@ -18,12 +18,23 @@ Dataset originals descarregats de Kaggle i github:
 ## Fitser per executar Models:
 - RunModels.Rmd: executa model baseline
 - RunModels3Extension: executa model amb extensio de efectes climatics de l'any
+- Run_Model1_Model2_Model3: executa model 1 (any jerarquic), Model2 (pais jerarquic), Model 3(ID jerarquic)
 
 
 ## Models Bayesians:
 Es troben a la carpeta **stan_models/**
-- baseModel: Model base amb nomes edat i sexe
-- Model3: Model amb extensio de efectes climatics
+- baseModel: Model base amb nomes **edat i sexe**
+- Model1: Model amb edat, sexe i efecte d'**any** jerarquic
+- Model2: Model amb edat, sexe,efecte d'any jerarquic i efecte **pais** jerarquic
+- Model3_simple: Model amb sexe,efecte d'any jerarquic, efecte pais jerarquic i efecte **ID** jerarquic
+- Model3: Model amb sexe,efecte d'any jerarquic amd **efectes climatologics** (temperatura, precipitacio, vent), efecte pais jerarquic i efecte ID jerarquic
+
+Cada model te arxiu .rds amb el model ja ajustat:
+- baseModel-> fit_model0.rds ¡¡¡ Problema: la versió és antiga, està entranat amb F =1, M = 0 en comptes de F=0, M=1!!
+- Model1-> fit_model1.rds
+- Model2-> fit_model2.rds
+- Model3_simple -> fit_model3.rds
+- Model3 -> Model3.rds
 
 ## Report:
 - Fitxer AB___Final_Assignment.pdf
