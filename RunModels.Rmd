@@ -7,46 +7,48 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-library(rstan) 
-#library(rstanarm) 
-library(tidyverse) 
+library(rstan)
+library(bayesplot)
+library(tidyverse)
 library(broom)
 library(lubridate)
-
 ```
 
 ## Preparation
 
 ```{r Preparation}
-df_og <- read.csv("data/filtered_marathons_results.csv")
-
 # Helper function to convert H:MM:SS to total minutes
 time_to_minutes <- function(time_str) {
   parts <- as.numeric(unlist(strsplit(time_str, ":")))
-  if(length(parts) == 3) {
-    return(parts[1] * 60 + parts[2] + parts[3]/60)
+  if (length(parts) == 3) {
+    return(parts[1] * 60 + parts[2] + parts[3] / 60)
   } else {
-    return(parts[1] + parts[2]/60)
+    return(parts[1] + parts[2] / 60)
   }
 }
+df_og <- read.csv("data/repeated_ids_with_countries.csv")
+
+mean_age <- mean(df_og$Age)
+sd_age <- sd(df_og$Age)
 
 df_time <- df_og %>%
   mutate(
-    # Convert Official Time to minutes
     minutes = sapply(`Official.Time`, time_to_minutes),
     log_time = log(minutes),
-    # Encode Sex: Male = 0, Female = 1
-    sex_numeric = ifelse(`M.F` == "F", 1, 0),
-    # Age squared
-    age2 = Age^2
+    runner_id = as.numeric(as.factor(ID)),
+    country_id = as.numeric(as.factor(Country)),
+    year_id = as.numeric(as.factor(Year)),
+    sex_numeric = ifelse(`M.F` == "M", 1, 0),
+    age_std = (Age - mean_age) / sd_age,
+    age2_std = age_std^2
   )
 df_clean <- df_time %>%
   filter(!is.na(log_time)) # Remove any rows with missing times
 
-# Note: For large datasets (Boston has ~30k runners/year), 
+# Note: For large datasets (Boston has ~30k runners/year),
 # you might want to take a sample for testing:
 # df <- df %>% sample_n(2000)
-df<- df_clean %>% sample_n(3000)
+df <- df_clean %>% sample_n(3000)
 # 2. Prepare data list for Stan
 stan_data <- list(
   N = nrow(df),
@@ -55,286 +57,85 @@ stan_data <- list(
   age = df$Age,
   age2 = df$age2
 )
-
 ```
 
 
 
 ## Including Plots
 
-In the `stan()` function, the `control` argument is used to tune the "engine" of the sampler. While Stan is very good at automatically adjusting itself, sometimes the math gets tricky, and you need to give it specific instructions to be more careful.
-
-Setting `adapt_delta = 0.95` is like telling the sampler: **"Stop trying to run so fast and start taking smaller, more careful steps."**
-
-#### 1. What does `control` do?
-The `control` argument accepts a list of internal parameters that manage the **Hamiltonian Monte Carlo (HMC)** algorithm. 
-*   By default, Stan tries to find the best balance between speed and accuracy.
-*   The `control` list allows you to override these defaults if the model is having trouble "converging" (finding the right answer) or if you see warning messages like **"divergent transitions."**
-
-#### 2. Why `0.95`?
-The `adapt_delta` parameter specifically sets the **target acceptance rate** for the sampler.
-
-*   **The Default (0.80):** By default, `rstan` targets an 80% acceptance rate. This is usually the "sweet spot" for speed—it takes relatively large steps through your data to finish the simulation quickly.
-*   **The Adjustment (0.95):** When you increase this to 0.95, you are forcing the sampler to aim for a 95% acceptance rate. To achieve this higher precision, the algorithm must take **smaller step sizes**.
-*   **Why do this?** You usually set it to 0.95 because your model has "high curvature" areas (like a steep canyon or a narrow funnel in the math). If the steps are too large, the sampler "trips" and flies off to infinity, causing a **divergence**. Smaller steps allow it to navigate these tricky areas without crashing.
-
-#### Summary of the Trade-off:
-| Setting | Step Size | Speed | Robustness |
-| :--- | :--- | :--- | :--- |
-| **0.80 (Default)** | Larger | Faster | May "trip" on complex models (Divergences) |
-| **0.95** | Smaller | Slower | Much more likely to navigate complex models safely |
-
-**Recommendation:** You generally only need `adapt_delta = 0.95` if Stan gives you a warning about **"divergent transitions after warmup."** If your model runs fine without it, the default 0.80 is better because it finishes faster.
-
 ```{r runModel}
 options(mc.cores = parallel::detectCores())
 rstan_options(auto_write = TRUE)
 
 model.base <- stan(
-  file = "stan_models/baseModel.stan", 
+  file = "stan_models/baseModel.stan",
   data = stan_data,
   chains = 4,
   iter = 5000,
-  #warmup = 1000,
   control = list(
-    adapt_delta = 0.95, 
-    max_treedepth = 15  # Aumentado de 10 a 15
+    adapt_delta = 0.95,
+    max_treedepth = 15 # Aumentado de 10 a 15
   )
 )
-
 ```
 
-
-
-Likelihood Selection: You specified a Student-t distribution. This is excellent for marathon data as it is robust against outliers (extremely slow or extremely fast runners) compared to a normal distribution.
-
-Log Transformation: Since the equation uses log(time_i), the coefficients are interpreted as percentage changes. For example, a \beta_{sex} of 0.10 would imply females are roughly 10% slower than males.
-
-Age Quadratic: The inclusion of Age^2 allows the model to capture the "U-shaped" curve of athletic performance (runners get faster until their late 20s/early 30s and then gradually slow down).
-
-Prior for ν: I used a gamma(2, 0.1) prior for the degrees of freedom (ν). This keeps ν away from 0 and 1, ensuring the distribution has a defined mean and variance while still allowing for heavy tails.
 
 ```{r results}
-print(model.base)
-plot(model.base)
-# 4. Results and Diagnostics
-print(model.base, pars = c("beta0", "beta_sex", "beta_age", "beta_age2", "sigma", "nu"))
+target_pars <- c("beta0", "beta_sex", "beta_age", "beta_age2", "sigma", "nu")
 
-# Plotting the posterior distributions
-plot(model.base, pars = c("beta_sex", "beta_age", "beta_age2"))
+p_trace <- mcmc_trace(model.base, pars = target_pars) +
+  ggtitle("Trace Plots (Filtered Parameters)")
 
+# 3. Create Distribution (Posterior Density) Plots
+p_dens <- mcmc_dens(model.base, pars = target_pars) +
+  ggtitle("Posterior Distributions")
 
-# Extract results into a tidy format
-model_summary <- rstan::extract(model.base)
 print(model_summary)
 
+posterior_samples <- as.array(model.base, pars = target_pars)
 df_pooled <- tibble(
-  #county = county_name,
+  county = county_name,
   model = "pooled",
-  intercept = mean(model_summary$beta0),
-  slope = mean(model_summary$mu),
-  slope_sex = mean(model_summary$beta_sex),
-  slope_age = mean(model_summary$beta_age), 
-  slope_age2 = mean(model_summary$beta_age2)
+  intercept = mean(posterior_samples$beta0),
+  slope = mean(posterior_samples$beta_age),
+  slope_sex = mean(posterior_samples$beta_sex),
+  slope_age = mean(posterior_samples$beta_age),
+  slope_age2 = mean(posterior_samples$beta_age2)
 )
-
-
 ```
 
 ```{r}
-# 5. Extracting samples for prediction
-post_samples <- extract(model.base)
-# Example: Mean effect of being Female on log(time)
-mean_sex_effect <- mean(model_summary$beta_sex)
+mean_sex_effect <- mean(posterior_samples$beta_sex)
 cat("On average, being female changes log time by:", mean_sex_effect)
-
 ```
 
 ```{r}
-post_samples <- as.data.frame(model_summary)
+post_samples <- as.data.frame(posterior_samples)
 
 # Generate predictions for a range of ages
 age_range <- seq(min(df_clean$Age), max(df_clean$Age), length.out = 100)
 pred_df <- map_df(age_range, function(a) {
-  # Calculate mean log_time for Males (sex=0) at this age
   mu_samples <- post_samples$beta0 + post_samples$beta_age * a + post_samples$beta_age2 * (a^2)
-  tibble(Age = a, 
-         log_time_pred = mean(mu_samples),
-         low = quantile(mu_samples, 0.025),
-         high = quantile(mu_samples, 0.975))
+  tibble(
+    Age = a,
+    log_time_pred = mean(mu_samples),
+    low = quantile(mu_samples, 0.025),
+    high = quantile(mu_samples, 0.975)
+  )
 })
 
 ggplot(pred_df, aes(x = Age, y = log_time_pred)) +
   geom_line(color = "blue", size = 1) +
   geom_ribbon(aes(ymin = low, ymax = high), alpha = 0.2, fill = "blue") +
   geom_point(data = df_clean, aes(x = Age, y = log_time)) +
-  labs(title = "Posterior Predictive: Log(Time) vs Age",
-       subtitle = "Blue line shows mean relationship for Males",
-       y = "log(Time in Minutes)") +
+  labs(
+    title = "Posterior Predictive: Log(Time) vs Age",
+    subtitle = "Blue line shows mean relationship for Males",
+    y = "log(Time in Minutes)"
+  ) +
   theme_minimal()
 ```
 
 
 
 
-
-
-# Model3
-```{r Prep3}
-
-
-df_og <- read.csv("data/repeated_ids_with_countries.csv")
-
-mean_age <- mean(df_og$Age)
-sd_age <- sd(df_og$Age)
-df_time <- df_og %>%
-  mutate(
-    # Convert Official Time to minutes
-    minutes = sapply(`Official.Time`, time_to_minutes),
-    log_time = log(minutes),
-    runner_id = as.numeric(as.factor(ID)),
-    country_id = as.numeric(as.factor(Country)),
-    year_id = as.numeric(as.factor(Year)),
-    sex_numeric = ifelse(`M.F` == "F", 1, 0),
-    # Standardize Age to help convergence
-    age_std = (Age - mean_age) / sd_age,
-    age2_std = age_std^2
-  )
-df_clean <- df_time %>%
-  filter(!is.na(log_time)) # Remove any rows with missing times
-
-df_test <- df_clean %>% filter(Year > 2018)
-df<- df_clean %>% filter(Year <= 2018)
-
-
-# Example Year-level covariate: Average Temperature in Boston on race day
-# (You would replace these with actual historical values)
-df_weather <- read.csv("data/weather_averages.csv")
-
-print(str(df_weather))
-year_covs <- df_weather %>%
-  mutate(
-    Year = as.numeric(as.factor(Year))
-  )
-print(year_covs)
-
-year_pred <- year_covs %>% filter(Year > 2018)
-year_covs <- year_covs %>% filter(Year <= 2018)
-# 2018 (1.57"): Give this a score of 1.0 (Maximum wetness; rain during race).
-# 2019 (0.72"): Give this a score of 0.2 (High total, but the course was just "damp" during the race).[1][2][3]
-# 2015 (0.61"): Give this a score of 0.8 (Steady rain during the race).
-# 
-
-
-# To turn wind into a number for your model, use the cosine of the angle between the wind and the course.
-# Tailwind (+): Wind from the West (245°) is a 100% tailwind.
-# Headwind (-): Wind from the East (65°) is a 100% headwind.
-# Formula for your spreadsheet:
-# Effective Wind = Wind Speed × cos(Wind Direction - 65°)
-# (Note: Convert compass directions to degrees: N=0, E=90, S=180, W=270)
-
-
-id_predict = 23280
-target_year = 2019
-
-runner_data <- df_time %>%
-  filter(runner_id == id_predict) %>%
-  slice(1)
-
-age_at_target <- target_year - runner_data$Birth.Year
-runner_levels <- levels(as.factor(df$ID))
-country_levels <- levels(as.factor(df$Country))
-
-data_list <- list(
-  N = nrow(df),
-  R_runner = max(df$runner_id),
-  C_country = max(df$country_id),
-  J_year = max(df$year_id),
-  
-  # Individual data
-  y = df$log_time,
-  age = df$age_std,
-  age2 = df$age2_std,
-  sex = df$sex_numeric,
-  
-  # Index maps
-  runner = df$runner_id,
-  country = df$country_id,
-  year = df$year_id,
-  
-  # Year-level covariate (The "Multilevel Covariate")
-  year_temp = year_covs$Temperature, 
-  year_dew = year_covs$Dew.Point,
-  year_prec = year_covs$Precip.,
-  year_wind = year_covs$Tailwind_Component,
-  
-  pred_runner_id =  which(runner_levels == as.character(id_predict)),      #Index of a specific runner to predict
-  pred_country_id= which(country_levels == as.character(id_predict)),     #Index of their country
-  pred_age= (age_at_target - mean_age) / sd_age,           # Their age
-  pred_sex= runner_data$sex_numeric,           # Their sex
-  pred_temp=target_temp = year_pred$Temperature,
-  pred_dew = year_pred$Dew.Point,
-  pred_prec = year_pred$Precip.,
-  pred_wind = year_pred$Tailwind_Component,
-)
-```
-
-
-
-```{r}
-library(rstan)
-library(bayesplot)
-library(broom.mixed)
-
-# Run the model
-fit <- stan("marathon_model.stan", data = data_list, iter = 2000, chains = 4)
-
-## 1. Summary Statistics (Rhat and ESS)
-# Rhat should be < 1.05. ESS (Effective Sample Size) should be > 400.
-print(fit, pars = c("b_0", "b_sex", "b_age", "sigma_y", "sigma_runner", "nu"))
-
-## 2. Visual Convergence (Trace plots)
-# Look for "fuzzy caterpillars" (chains overlapping and stable)
-mcmc_trace(fit, pars = c("b_0", "b_sex", "sigma_y"))
-
-## 3. Posterior Predictive Check (PPC)
-# Does the model's simulated data look like the real data?
-y_rep <- extract(fit)$y_rep # (If you added y_rep to generated quantities)
-ppc_dens_overlay(y = data_list$y, yrep = y_rep[1:100, ])
-```
-
-
-```{r}
-# Extract the predictions from the Generated Quantities block
-sims <- rstan::extract(fit)
-
-# Convert from log(time) to minutes
-pred_existing_min <- exp(sims$y_tilde_existing)
-pred_new_min <- exp(sims$y_tilde_new_runner)
-
-# Calculate Medians and Credibility Intervals
-quantile(pred_existing_min, c(0.025, 0.5, 0.975))
-quantile(pred_new_min, c(0.025, 0.5, 0.975))
-
-# Visualization of Predictions
-library(ggplot2)
-data.frame(
-  time = c(pred_existing_min, pred_new_min),
-  type = rep(c("Existing Runner", "New Runner"), each = length(pred_existing_min))
-) %>%
-  ggplot(aes(x = time, fill = type)) +
-  geom_density(alpha = 0.5) +
-  labs(title = "Predicted Marathon Finish Times",
-       x = "Time (Minutes)",
-       y = "Probability Density") +
-  theme_minimal()
-```
-
-
-Key differences from the Radon example:
-Student-t: In the prediction (Generated Quantities), we use student_t_rng instead of normal_rng. This ensures the uncertainty includes the possibility of "bad race days" (heavy tails).
-
-Multilevel Structure: In Radon, you only had county. Here you have runner, country, and year. When predicting a New Runner, you must simulate a new alpha_runner from normal(0, sigma_runner).
-
-Log-Transformation: Always remember that your y is log(time). Your predictions will be very small numbers unless you wrap them in exp().
-Year Covariate: We treated year_temp as your u (uranium). To predict a future year, you must provide a pred_temp (e.g., if you want to know what happens if the next marathon is a heatwave).

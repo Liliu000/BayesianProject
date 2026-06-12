@@ -1,0 +1,216 @@
+---
+title: "PlotsDataset"
+author: "AAA"
+date: "2026-06-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+```
+
+## Year
+
+```{r year}
+df <- read.csv("data/repeated_ids.csv")
+
+time_to_minutes <- function(time_str) {
+  parts <- as.numeric(unlist(strsplit(time_str, ":")))
+  if(length(parts) == 3) {
+    return(parts[1] * 60 + parts[2] + parts[3]/60)
+  } else {
+    return(parts[1] + parts[2]/60)
+  }
+}
+
+df <- df %>%
+  mutate(
+    Time_Mins = sapply(Official.Time, time_to_minutes),
+)
+ggplot(df, aes(x = Year, y = Time_Mins)) +
+  # Create the blue shaded CI area (stela)
+  stat_summary(fun.data = mean_cl_normal, 
+               geom = "ribbon", 
+               fill = "blue", 
+               alpha = 0.2) + 
+  # Create the red mean line
+  stat_summary(fun = mean, 
+               geom = "line", 
+               color = "red", 
+               size = 1) +
+  # Add mean points for clarity
+  stat_summary(fun = mean, 
+               geom = "point", 
+               color = "red") +
+  labs(title = "Mean Official Time with 95% CI Ribbon",
+       subtitle = "Blue area = 95% CI, Red line = Mean",
+       y = "Minutes",
+       x = "Year") +
+  theme_minimal()
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r age}
+
+ggplot(df, aes(x = Age)) +
+  # Create the histogram with specific binwidth and colors
+  geom_histogram(
+    binwidth = 2,           # Adjust this to match the bar thickness in your image
+    fill = "#ff721f",       # The specific vibrant orange color
+    color = "white",        # Thin white border between bars
+    size = 0.3              # Border thickness
+  ) +
+  # Set the x-axis breaks to match the image (30, 50, 70)
+  scale_x_continuous(breaks = c(30, 50, 70)) +
+  # Apply a clean theme
+  theme_minimal() +
+  # Fine-tune the labels and grid
+  labs(
+    x = "Age",
+    y = "Count"
+  ) +
+  theme(
+    panel.grid.minor = element_blank(),         # Remove minor grid lines
+    panel.grid.major = element_line(color = "#ebebeb"), # Light grey grid lines
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10, color = "#555555")
+  )
+  
+```
+
+```{r age2}
+ggplot(df, aes(x = Age, y = Time_Mins)) +
+  # Add the points. 
+  # alpha = 0.1 makes them very transparent so they don't overlap into a solid blob.
+  # size = 0.5 makes the dots small.
+  geom_point(alpha = 0.05, size = 0.5, color = "black") +
+  
+  # Add the red trend line (GAM or LOESS smoothing)
+  # se = TRUE adds the grey confidence interval seen in your image
+  geom_smooth(method = "gam", color = "red", fill = "grey80", size = 1.2) +
+  
+  # Set labels
+  labs(
+    x = "Age",
+    y = "Finish time (hours)"
+  ) +
+  
+  # Styling to match the image
+  theme_minimal() +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(color = "#ebebeb"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+```
+```{r gender}
+
+# 2. Create the plot
+ggplot(df, aes(x = M.F, y = Time_Mins, fill = M.F)) +
+  # Draw the violin plot
+  geom_violin(trim = FALSE, alpha = 0.8, color = "black") +
+  # Add the narrow white boxplot inside
+  geom_boxplot(width = 0.1, fill = "white", color = "black", outlier.size = 1) +
+  # Match the colors from the image (Coral and Teal)
+  scale_fill_manual(values = c("F" = "#f68d83", "M" = "#5cc9c1")) +
+  # Labels
+  labs(
+    x = "Gender",
+    y = "Finish time (minutes)",
+    fill = "gender"
+  ) +
+  # Theme and styling
+  theme_minimal() +
+  theme(
+    panel.grid.major.x = element_blank(), # Remove vertical grid lines
+    panel.grid.minor = element_blank(),
+    legend.position = "right",
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+```
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r country}
+df <- read.csv("data/repeated_ids_with_countries.csv")
+df <- df %>%
+  mutate(
+    Time_Mins = sapply(Official.Time, time_to_minutes),
+)
+summary_df <- df %>%
+  group_by(Country, Year) %>%
+  summarise(mean_finish_time = mean(Time_Mins, na.rm = TRUE)) %>%
+  ungroup()
+
+ggplot(summary_df, aes(x = Year, y = mean_finish_time, color = Country, group = Country)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  labs(
+    title = "Mean Finishing Time by Country",
+    x = "Year",
+    y = "Mean Finish Time (Minutes)",
+    color = "Country"
+  ) +
+  theme_minimal() +
+  theme(panel.grid.minor = element_blank())
+```
+```{r}
+top_countries <- df %>%
+  count(Country, sort = TRUE) %>%
+  head(15) %>%
+  pull(Country)
+
+# Filter the summarized data to only include those 10
+filtered_summary <- summary_df %>%
+  filter(Country %in% top_countries)
+
+# Plot the filtered data
+ggplot(filtered_summary, aes(x = Year, y = mean_finish_time, color = Country, group = Country)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  theme_minimal() +
+  labs(y = "Mean Finish Time (Minutes)")
+
+ggplot(df, aes(x = reorder(Country, Time_Mins, FUN = median), y = Time_Mins)) +
+  geom_boxplot(fill = "steelblue", color = "black") +
+  coord_flip() +
+  labs(x = "Country", y = "Finish Time (Minutes)") +
+  theme_minimal()
+```
+```{r}
+ggplot(df, aes(x = Time_Mins)) +
+  geom_histogram(aes(y = ..density..), binwidth = 5, fill = "steelblue", color = "white") +
+  geom_density(color = "red", size = 1) +
+  labs(
+    title = "Race Time Distribution with Density Curve",
+    x = "Time (Minutes)",
+    y = "Density"
+  ) +
+  theme_minimal()
+
+library(scales) # Required for nice labels
+
+ggplot(df, aes(x = Time_Mins)) +
+  geom_histogram(fill = "firebrick", color = "white", bins = 50) +
+  scale_x_log10(breaks = trans_breaks("log10", function(x) 10^x),
+                labels = trans_format("log10", math_format(10^.x))) +
+  labs(
+    title = "Time Distribution on Log10 Scale",
+    x = "Minutes (Log Scale)",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+```
+
